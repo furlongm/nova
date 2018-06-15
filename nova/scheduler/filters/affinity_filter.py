@@ -16,8 +16,14 @@
 
 
 import netaddr
+import six
+
 from oslo_log import log as logging
 
+from nova import compute
+from nova import context
+from nova.api.openstack import common
+from nova import availability_zones as az
 from nova.scheduler import filters
 from nova.scheduler.filters import utils
 
@@ -132,3 +138,51 @@ class ServerGroupAffinityFilter(_GroupAffinityFilter):
     def __init__(self):
         self.policy_name = 'affinity'
         super(ServerGroupAffinityFilter, self).__init__()
+
+
+class SameAvailabilityZoneFilter(filters.BaseHostFilter):
+    """Schedule the instance on the same availability zone as a set of
+    instances.
+    """
+    def host_passes(self, host_state, spec_obj):
+        compute_api = compute.API(skip_policy_check=True)
+        ctxt = context.get_admin_context()
+        affinity_uuids = spec_obj.get_scheduler_hint('same_availability_zone') or []
+
+        if isinstance(affinity_uuids, six.string_types):
+            affinity_uuids = [affinity_uuids]
+
+        if affinity_uuids:
+            target_azs = set()
+            for uuid in affinity_uuids:
+                instance = common.get_instance(compute_api, ctxt, uuid)
+                target_azs.add(az.get_instance_availability_zone(ctxt,
+                                                                 instance))
+            host_az = az.get_host_availability_zone(ctxt, host_state.host)
+            return host_az in target_azs
+
+        return True
+
+
+class DifferentAvailabilityZoneFilter(filters.BaseHostFilter):
+    """Schedule the instance on a different availability zone from a set of
+    instances.
+    """
+    def host_passes(self, host_state, spec_obj):
+        compute_api = compute.API(skip_policy_check=True)
+        ctxt = context.get_admin_context()
+        affinity_uuids = spec_obj.get_scheduler_hint('different_availability_zone') or []
+
+        if isinstance(affinity_uuids, six.string_types):
+            affinity_uuids = [affinity_uuids]
+
+        if affinity_uuids:
+            target_azs = set()
+            for uuid in affinity_uuids:
+                instance = common.get_instance(compute_api, ctxt, uuid)
+                target_azs.add(az.get_instance_availability_zone(ctxt,
+                                                                 instance))
+            host_az = az.get_host_availability_zone(ctxt, host_state.host)
+            return host_az not in target_azs
+
+        return True
